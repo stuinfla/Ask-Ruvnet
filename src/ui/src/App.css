@@ -2268,6 +2268,38 @@ body > div > svg[id^="mermaid-"],
 .light-mode .stat-live-dot { color: rgba(8,145,178,0.5); }
 .light-mode .stat-live-dot::before { background: #0891b2; }
 
+.stats-trending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(250,204,21,0.18), rgba(234,88,12,0.18));
+  border: 1px solid rgba(250,204,21,0.45);
+  color: rgba(255,255,255,0.95);
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 0 12px rgba(250,204,21,0.12);
+}
+.stats-trending-badge:hover {
+  transform: translateY(-1px);
+  border-color: rgba(250,204,21,0.7);
+  box-shadow: 0 0 18px rgba(250,204,21,0.3);
+}
+.stats-trending-badge .stats-highlight {
+  color: #facc15;
+  text-shadow: 0 0 14px rgba(250,204,21,0.55);
+  font-size: 1rem;
+}
+.stats-trending-icon { font-size: 0.95rem; line-height: 1; }
+.light-mode .stats-trending-badge {
+  color: #92400e;
+  background: linear-gradient(90deg, rgba(250,204,21,0.18), rgba(234,88,12,0.12));
+  border-color: rgba(217,119,6,0.55);
+}
+.light-mode .stats-trending-badge .stats-highlight { color: #b45309; }
+
 .light-mode .stats-bar {
   background: linear-gradient(90deg, rgba(234,88,12,0.04), rgba(124,58,237,0.04), rgba(8,145,178,0.04));
 }

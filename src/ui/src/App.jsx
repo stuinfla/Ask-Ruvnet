@@ -208,7 +208,7 @@ const HeroSection = ({ onAction, onCapability, onOnramp, ecosystemStats, knowled
   <div className="hero-compact">
     {/* Primary CTA: Ask anything — chat input above the fold */}
     <h1 className="hero-heading">Ask anything about RuVector</h1>
-    <p className="hero-subheading">508 expert articles. Answers in 3 seconds. No signup required.</p>
+    <p className="hero-subheading">{communityStats?.kbEntries || 550} expert articles. Answers in 3 seconds. No signup required.</p>
     <form className="hero-search" onSubmit={handleHeroSubmit}>
       <input
         ref={heroInputRef}
@@ -311,7 +311,7 @@ const HeroSection = ({ onAction, onCapability, onOnramp, ecosystemStats, knowled
 
     {/* Proof bar — one-line credibility */}
     <div className="dogfood-callout">
-      <span className="dogfood-text">This knowledge base runs on RuVector. 508 expert articles in <strong>0.8MB</strong>. No Docker. No database. No server. Just a file.</span>
+      <span className="dogfood-text">This knowledge base runs on RuVector. {communityStats?.kbEntries || 550} expert articles in <strong>0.8MB</strong>. No Docker. No database. No server. Just a file.</span>
     </div>
 
     {/* Show More — deep-dive content below the fold */}
@@ -333,7 +333,7 @@ const HeroSection = ({ onAction, onCapability, onOnramp, ecosystemStats, knowled
             <span className="dikw-icon">&#128161;</span>
             <span className="dikw-label">RuVector + RVF</span>
             <span className="dikw-desc">Stores meaning, not just data</span>
-            {heroExpanded && <span className="dikw-detail">508 expert articles in 0.8MB. HNSW search in 0.3ms. 290+ PostgreSQL functions. Runs in browser via WASM.</span>}
+            {heroExpanded && <span className="dikw-detail">{communityStats?.kbEntries || 550} expert articles in 0.8MB. HNSW search in 0.3ms. 290+ PostgreSQL functions. Runs in browser via WASM.</span>}
           </div>
           <div className="dikw-layer dikw-orchestration">
             <span className="dikw-icon">&#9889;</span>
@@ -1616,17 +1616,53 @@ function App() {
       {/* ===== COMMUNITY STATS BAR ===== */}
       {(communityStats || ecosystemStats) && (
         <div className="stats-bar">
+          {/* Recognition badge — leads the bar when present */}
+          {communityStats?.trending?.rank === 1 && (<>
+            <a
+              href={communityStats.trending.source || 'https://github.com/trending/developers'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="stats-trending-badge"
+              title={`Recognized #1 Trending Developer on GitHub — week of ${communityStats.trending.week}`}
+            >
+              <span className="stats-trending-icon">🏆</span>
+              <span className="stats-highlight">#1</span> Trending Dev · GitHub
+            </a>
+            <span className="stats-dot">·</span>
+          </>)}
           {communityStats?.github?.totalStars > 0 && (<>
-            <span><span className="stats-highlight"><CountUp end={communityStats.github.totalStars} /></span> GitHub Stars</span>
+            <span>
+              <span className="stats-highlight">
+                <CountUp end={communityStats.github.totalStars} />
+              </span> GitHub Stars
+            </span>
             <span className="stats-dot">·</span>
           </>)}
           {communityStats?.npm?.monthlyDownloads > 0 && (<>
-            <span><span className="stats-highlight"><CountUp end={Math.round(communityStats.npm.monthlyDownloads / 1000)} suffix="K+" /></span> npm Downloads/mo</span>
+            <span title={`Across ${communityStats.npm.totalPackages || 250}+ maintained npm packages`}>
+              <span className="stats-highlight">
+                {communityStats.npm.monthlyDownloads >= 1_000_000
+                  ? <><CountUp end={+(communityStats.npm.monthlyDownloads / 1_000_000).toFixed(1)} decimals={1} />M+</>
+                  : <CountUp end={Math.round(communityStats.npm.monthlyDownloads / 1000)} suffix="K+" />}
+              </span> Monthly npm Downloads
+            </span>
+            <span className="stats-dot">·</span>
+          </>)}
+          {communityStats?.github?.totalRepos > 0 && (<>
+            <span>
+              <span className="stats-highlight"><CountUp end={communityStats.github.totalRepos} suffix="+" /></span> Repos
+            </span>
+            <span className="stats-dot">·</span>
+          </>)}
+          {communityStats?.github?.followers > 0 && (<>
+            <span>
+              <span className="stats-highlight"><CountUp end={communityStats.github.followers} /></span> Followers
+            </span>
             <span className="stats-dot">·</span>
           </>)}
           <span><span className="stats-highlight"><CountUp end={communityStats?.rustCrates || 80} suffix="+" /></span> Rust Crates</span>
           <span className="stats-dot">·</span>
-          <span><span className="stats-highlight"><CountUp end={communityStats?.kbEntries || ecosystemStats?.totalEntries || 383} /></span> KB Entries</span>
+          <span><span className="stats-highlight"><CountUp end={communityStats?.kbEntries || ecosystemStats?.totalEntries || 550} /></span> KB Entries</span>
           {communityStats?.pi?.memories > 0 && (<>
             <span className="stats-dot">·</span>
             <span><span className="stats-highlight"><CountUp end={communityStats.pi.memories} /></span> Pi Memories</span>

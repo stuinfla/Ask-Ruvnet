@@ -1890,6 +1890,45 @@ app.get('/api/ecosystem-stats', async (req, res) => {
 let communityStatsCache = null;
 let communityStatsCacheExpiry = 0;
 
+// Trending-dev recognition. Update the `source` URL when Stuart provides the screenshot/tweet.
+// The badge shows on the stats bar as long as `rank` is set.
+const TRENDING_DEV = {
+    rank: 1,
+    week: '2026-05-05', // week of — update if/when changes
+    source: process.env.TRENDING_SOURCE_URL || 'https://github.com/trending/developers', // TODO: replace with Stuart's screenshot/tweet URL
+};
+
+// Paginate ruvnet's repos and sum stars/forks (175+ repos as of 2026-05-13).
+async function fetchAllRuvnetRepos() {
+    const all = [];
+    for (let page = 1; page <= 5; page++) {
+        const r = await fetch(`https://api.github.com/users/ruvnet/repos?per_page=100&page=${page}&type=owner`);
+        if (!r.ok) break;
+        const arr = await r.json();
+        if (!Array.isArray(arr) || arr.length === 0) break;
+        all.push(...arr);
+        if (arr.length < 100) break;
+    }
+    return all;
+}
+
+// All packages maintained by ruvnet on npm (250+ as of 2026-05-13).
+async function fetchAllRuvnetNpmPackages() {
+    const r = await fetch('https://registry.npmjs.org/-/v1/search?text=maintainer:ruvnet&size=250');
+    if (!r.ok) return [];
+    const d = await r.json();
+    return d.objects?.map(o => o.package.name) || [];
+}
+
+async function lastMonthDownloads(pkg) {
+    try {
+        const r = await fetch(`https://api.npmjs.org/downloads/point/last-month/${encodeURIComponent(pkg)}`);
+        if (!r.ok) return 0;
+        const d = await r.json();
+        return d.downloads || 0;
+    } catch { return 0; }
+}
+
 app.get('/api/community-stats', async (req, res) => {
     try {
         const now = Date.now();
@@ -1897,42 +1936,62 @@ app.get('/api/community-stats', async (req, res) => {
             return res.json(communityStatsCache);
         }
 
-        // Fetch all sources in parallel
-        const [ruvectorGh, rufloGh, rvfNpm, rufloNpm, cfCliNpm, piStatus] = await Promise.allSettled([
-            fetch('https://api.github.com/repos/ruvnet/ruvector').then(r => r.json()),
-            fetch('https://api.github.com/repos/ruvnet/ruflo').then(r => r.json()),
-            fetch('https://api.npmjs.org/downloads/point/last-month/@ruvector/rvf').then(r => r.json()),
-            fetch('https://api.npmjs.org/downloads/point/last-month/ruflo').then(r => r.json()),
-            fetch('https://api.npmjs.org/downloads/point/last-month/@claude-flow/cli').then(r => r.json()),
-            fetch('https://pi.ruv.io/v1/status').then(r => r.json()),
-        ]);
+        // 1. GitHub: enumerate all of ruvnet's repos for accurate totals
+        const reposPromise = fetchAllRuvnetRepos().catch(() => []);
+        const profilePromise = fetch('https://api.github.com/users/ruvnet').then(r => r.json()).catch(() => ({}));
+
+        // 2. npm: enumerate all maintained packages, then sum last-month downloads
+        const pkgsPromise = fetchAllRuvnetNpmPackages().catch(() => []);
+
+        // 3. Pi-Brain
+        const piPromise = fetch('https://pi.ruv.io/v1/status').then(r => r.json()).catch(() => ({}));
+
+        const [repos, profile, packages, piStatus] = await Promise.all([reposPromise, profilePromise, pkgsPromise, piPromise]);
+
+        // Compute GitHub totals (exclude forks the user doesn't own)
+        const ownRepos = repos.filter(r => !r.fork);
+        const totalStars = ownRepos.reduce((s, r) => s + (r.stargazers_count || 0), 0);
+        const totalForks = ownRepos.reduce((s, r) => s + (r.forks_count || 0), 0);
+        const topRepos = ownRepos
+            .sort((a, b) => b.stargazers_count - a.stargazers_count)
+            .slice(0, 5)
+            .map(r => ({ name: r.name, stars: r.stargazers_count, url: r.html_url }));
+
+        // Sum monthly downloads across all packages, throttled (npm rate-limits)
+        const npmTotals = [];
+        for (let i = 0; i < packages.length; i += 10) {
+            const batch = packages.slice(i, i + 10);
+            const results = await Promise.all(batch.map(lastMonthDownloads));
+            results.forEach((m, j) => npmTotals.push({ pkg: batch[j], m }));
+        }
+        const monthlyDownloads = npmTotals.reduce((s, x) => s + x.m, 0);
+        const topPackages = npmTotals.sort((a, b) => b.m - a.m).slice(0, 5);
 
         const stats = {
             github: {
-                ruvector: {
-                    stars: ruvectorGh.status === 'fulfilled' ? ruvectorGh.value.stargazers_count : 0,
-                    forks: ruvectorGh.status === 'fulfilled' ? ruvectorGh.value.forks_count : 0,
-                },
-                ruflo: {
-                    stars: rufloGh.status === 'fulfilled' ? rufloGh.value.stargazers_count : 0,
-                    forks: rufloGh.status === 'fulfilled' ? rufloGh.value.forks_count : 0,
-                },
-                totalStars: (ruvectorGh.status === 'fulfilled' ? ruvectorGh.value.stargazers_count : 0) +
-                            (rufloGh.status === 'fulfilled' ? rufloGh.value.stargazers_count : 0),
+                totalStars,
+                totalForks,
+                totalRepos: ownRepos.length,
+                followers: profile.followers || 0,
+                topRepos,
+                // Keep ruvector + ruflo sub-objects for backwards-compat with cards
+                ruvector: ((r) => r ? { stars: r.stargazers_count, forks: r.forks_count } : { stars: 0, forks: 0 })(ownRepos.find(r => r.name === 'RuVector')),
+                ruflo:    ((r) => r ? { stars: r.stargazers_count, forks: r.forks_count } : { stars: 0, forks: 0 })(ownRepos.find(r => r.name === 'ruflo')),
             },
             npm: {
-                monthlyDownloads: (rvfNpm.status === 'fulfilled' ? rvfNpm.value.downloads : 0) +
-                                  (rufloNpm.status === 'fulfilled' ? rufloNpm.value.downloads : 0) +
-                                  (cfCliNpm.status === 'fulfilled' ? cfCliNpm.value.downloads : 0),
+                monthlyDownloads,
+                totalPackages: packages.length,
+                topPackages,
             },
-            pi: piStatus.status === 'fulfilled' ? {
-                memories: piStatus.value.total_memories || 0,
-                contributors: piStatus.value.total_contributors || 0,
-                votes: piStatus.value.total_votes || 0,
-                graphEdges: piStatus.value.graph_edges || 0,
+            pi: piStatus ? {
+                memories: piStatus.total_memories || 0,
+                contributors: piStatus.total_contributors || 0,
+                votes: piStatus.total_votes || 0,
+                graphEdges: piStatus.graph_edges || 0,
             } : { memories: 0, contributors: 0, votes: 0, graphEdges: 0 },
             rustCrates: 80,
             kbEntries: reasoningBank?.db ? reasoningBank.db.getAllMetadata().length : 0,
+            trending: TRENDING_DEV,
             lastUpdated: new Date().toISOString(),
         };
 
@@ -1941,12 +2000,14 @@ app.get('/api/community-stats', async (req, res) => {
         res.json(stats);
     } catch (err) {
         console.error('[community-stats] Error:', err.message);
+        // Fallback uses last verified values (2026-05-13)
         res.json({
-            github: { totalStars: 24000, ruvector: { stars: 3200 }, ruflo: { stars: 21000 } },
-            npm: { monthlyDownloads: 105000 },
-            pi: { memories: 880, contributors: 55, votes: 944 },
+            github: { totalStars: 117140, totalForks: 15623, totalRepos: 175, followers: 7783, ruvector: { stars: 4047 }, ruflo: { stars: 50167 }, topRepos: [] },
+            npm: { monthlyDownloads: 8861903, totalPackages: 250, topPackages: [] },
+            pi: { memories: 21690, contributors: 119, votes: 944 },
             rustCrates: 80,
-            kbEntries: 383,
+            kbEntries: 550,
+            trending: TRENDING_DEV,
             lastUpdated: new Date().toISOString(),
             cached: true,
         });
