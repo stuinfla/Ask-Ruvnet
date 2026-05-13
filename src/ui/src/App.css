@@ -2224,7 +2224,10 @@ body > div > svg[id^="mermaid-"],
 
 .stats-bar {
   display: flex;
-  justify-content: center;
+  /* `safe center` keeps items centered when they fit, otherwise falls back to flex-start
+     so overflowing items don't get clipped on BOTH sides (which was hiding the
+     leading "#1 Trending Dev" badge on narrower viewports). */
+  justify-content: safe center;
   align-items: center;
   gap: 1rem;
   padding: 0.65rem 1.5rem;
@@ -2238,7 +2241,9 @@ body > div > svg[id^="mermaid-"],
   overflow-x: auto;
   letter-spacing: 0.02em;
   animation: statsSlideIn 0.8s ease-out;
+  scrollbar-width: thin;
 }
+.stats-bar > * { flex-shrink: 0; }
 
 @keyframes statsSlideIn {
   from { opacity: 0; transform: translateY(-100%); }
