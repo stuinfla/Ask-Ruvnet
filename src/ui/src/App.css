@@ -724,7 +724,9 @@ body {
   flex-wrap: wrap;
   gap: 0.6rem;
   justify-content: center;
-  max-width: 740px;
+  /* 920px lets all 4 pills sit on one row at standard widths; below ~720 they wrap
+     symmetrically (2+2) instead of the awkward 3+1 the previous 740px cap produced. */
+  max-width: 920px;
   width: 100%;
 }
 
@@ -2242,8 +2244,14 @@ body > div > svg[id^="mermaid-"],
   letter-spacing: 0.02em;
   animation: statsSlideIn 0.8s ease-out;
   scrollbar-width: thin;
+  /* Fade the right edge so the visitor reads "more is scrollable" instead of
+     "this is abruptly cut off". Applied at all widths now (was mobile-only). */
+  mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 24px), transparent 100%);
 }
 .stats-bar > * { flex-shrink: 0; }
+.stats-bar::-webkit-scrollbar { height: 4px; }
+.stats-bar::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 2px; }
 
 @keyframes statsSlideIn {
   from { opacity: 0; transform: translateY(-100%); }
