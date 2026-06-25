@@ -1,6 +1,6 @@
 {
   "name": "ask-ruvnet",
-  "version": "4.15.4",
+  "version": "4.16.0",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -19,8 +19,6 @@
     "kb:visual": "node scripts/build-kb-universe.js",
     "kb:visual:screenshot": "node scripts/build-kb-universe.js --screenshot",
     "kb:refresh": "node scripts/kb-refresh.js",
-    "kb:sweep": "node scripts/kb-sweep-updates.js",
-    "kb:sweep:force": "node scripts/kb-sweep-updates.js --force",
     "kb:evolution": "node scripts/ingest-github-evolution.js",
     "kb:github": "node scripts/ingest-github-repos.js",
     "kb:full": "npm run kb:github && npm run kb:evolution && npm run kb:ingest",

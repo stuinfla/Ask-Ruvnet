@@ -28,7 +28,7 @@ console.log('=== RVF Build (from kb-master.json) ===\n');
 console.log('[1/4] Reading kb-master.json...');
 
 if (!fs.existsSync(MASTER_PATH)) {
-  console.error('❌ kb-master.json not found. Run: node scripts/migrate-pg-to-master.mjs');
+  console.error('❌ kb-master.json not found. It is the source of truth — restore it from the repo root.');
   process.exit(1);
 }
 

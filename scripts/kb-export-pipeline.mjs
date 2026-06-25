@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { preflight, writeHeartbeat } from './lib/preflight.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -57,6 +58,7 @@ function runStage(label, scriptName, timeoutMs, extraArgs = []) {
 async function main() {
   const startTime = Date.now();
   log('=== KB Export Pipeline v3.0.0 (PG-FREE) ===');
+  preflight({ stage: 'kb-export', requireFiles: ['kb-master.json'] });
 
   const masterCount = readMasterCount();
   const manifestCount = readManifestCount();
@@ -69,7 +71,11 @@ async function main() {
   log('kb-master.json entries: ' + masterCount);
   log('Manifest vectorCount:   ' + manifestCount);
 
-  const isStale = masterCount !== manifestCount;
+  // Rebuild when counts differ OR kb-master.json is newer than the built manifest
+  // (catches in-place content updates that don't change the entry count).
+  let masterNewer = false;
+  try { masterNewer = masterStat.mtimeMs > fs.statSync(MANIFEST_PATH).mtimeMs; } catch { masterNewer = true; }
+  const isStale = masterCount !== manifestCount || masterNewer;
 
   if (CHECK) {
     log(isStale ? 'STALE: master=' + masterCount + ' vs manifest=' + manifestCount : 'UP TO DATE');
@@ -79,6 +85,7 @@ async function main() {
   if (!FORCE && !isStale) {
     log('Counts match. Use --force to re-export anyway.');
     appendLog({ timestamp: new Date().toISOString(), action: 'skip', masterCount, manifestCount, durationMs: Date.now() - startTime });
+    writeHeartbeat('kb-export', { status: 'ok', counts: { masterCount, manifestCount, action: 'skip' }, durationMs: Date.now() - startTime });
     return;
   }
 
@@ -110,7 +117,12 @@ async function main() {
   }
 
   appendLog({ timestamp: new Date().toISOString(), action: 'export', masterCount, oldManifest: manifestCount, newManifest: newCount, durationMs: Date.now() - startTime });
+  writeHeartbeat('kb-export', { status: 'ok', counts: { masterCount, newManifest: newCount, action: 'export' }, durationMs: Date.now() - startTime });
   log('Pipeline finished in ' + ((Date.now() - startTime) / 1000).toFixed(1) + 's');
 }
 
-main().catch(err => { log('FATAL: ' + err.message); process.exit(1); });
+main().catch(err => {
+  log('FATAL: ' + err.message);
+  writeHeartbeat('kb-export', { status: 'failed', error: String(err.message) });
+  process.exit(1);
+});

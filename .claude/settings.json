@@ -96,6 +96,12 @@
             "command": "[ -n \"$SESSION_ID\" ] && npx ruflo@latest hooks session-restore --session-id \"$SESSION_ID\" 2>/dev/null || true",
             "timeout": 10000,
             "continueOnError": true
+          },
+          {
+            "type": "command",
+            "command": "bash /Users/stuartkerr/Code/Ask-Ruvnet/Ask-Ruvnet/scripts/kb-health-statusline.sh 2>/dev/null || true",
+            "timeout": 8000,
+            "continueOnError": true
           }
         ]
       }

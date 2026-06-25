@@ -34,7 +34,7 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 const SOURCE_DIR = path.join(PROJECT_ROOT, '.ruvector', 'knowledge-base');
-const DEFAULT_OUTPUT_DIR = '/Users/stuartkerr/Code/Ruvnet-Koweldgebase-and-Application-Builder/kb-data/';
+const DEFAULT_OUTPUT_DIR = path.join(PROJECT_ROOT, 'kb-data');
 
 const DIMENSIONS = 384;
 const BYTES_PER_FLOAT = 4;

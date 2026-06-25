@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
 import { fileURLToPath } from 'url';
+import { preflight, writeHeartbeat } from './lib/preflight.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -130,17 +131,17 @@ async function synthesizeGoldEntry(repoName, chunks, existingTitles) {
   const context = sample.map(c => c.content.slice(0, 1500)).join('\n\n---\n\n');
 
   const prompt = 'You are a technical writer creating expert teaching entries for the RuvNet knowledge base.\n\n' +
-    'Based on these code/documentation chunks from the "' + repoName + '" repository, write 1-5 teaching-quality knowledge base entries.\n\n' +
+    'Based on these code/documentation chunks from the "' + repoName + '" repository, write 1-3 teaching-quality knowledge base entries.\n\n' +
     '--- SOURCE CHUNKS ---\n' + context + '\n--- END CHUNKS ---\n\n' +
     'EXISTING TITLES (do NOT duplicate): ' + existingTitles.join(', ') + '\n\n' +
-    'Return a JSON array. Each entry: { "title": "...", "content": "... (500-2000 words, plain English, analogies)", "category": "one of: agents, vector-db, architecture, security, neural, swarms, deployment, performance, teaching, general, wasm-local-llm, memory, algorithms", "quality_score": 85-100 }';
+    'Return a JSON array. Each entry: { "title": "...", "content": "... (400-900 words, plain English, analogies)", "category": "one of: agents, vector-db, architecture, security, neural, swarms, deployment, performance, teaching, general, wasm-local-llm, memory, algorithms", "quality_score": 85-100 }';
 
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + OPENROUTER_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: LLM_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 4096 }),
-      signal: AbortSignal.timeout(60000),
+      body: JSON.stringify({ model: LLM_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 8000 }),
+      signal: AbortSignal.timeout(240000), // 4 min: a 4096-token synthesis can exceed 60s (measured ~65s for 2699 tokens)
     });
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
@@ -163,6 +164,9 @@ async function main() {
   log('KB Auto-Curate v3.0.0 (PG-FREE)');
   log('==================================================\n');
 
+  // Resilience: self-heal a wiped node_modules and verify inputs before doing work.
+  preflight({ stage: 'kb-curate', requireFiles: ['.ruvector/raw/manifest.json', 'kb-master.json'] });
+
   const rawManifest = loadRawManifest();
   const master = loadMaster();
   const repoCount = Object.keys(rawManifest.repos).length;
@@ -183,7 +187,7 @@ async function main() {
   const gaps = detectGaps(rawManifest, master);
   log('Gaps found: ' + gaps.length + ' (' + gaps.filter(g => g.status === 'GAP').length + ' new, ' + gaps.filter(g => g.status === 'STALE').length + ' stale)');
 
-  if (gaps.length === 0) { log('No gaps. KB is up to date.'); return; }
+  if (gaps.length === 0) { log('No gaps. KB is up to date.'); writeHeartbeat('kb-curate', { status: 'ok', counts: { created: 0, updated: 0, errors: 0, totalEntries: master.entryCount } }); return; }
 
   for (const gap of gaps) {
     log('  ' + gap.status + ': ' + gap.package_name + ' (' + gap.chunk_count + ' chunks)');
@@ -261,12 +265,11 @@ async function main() {
   // Write heartbeat + audit log
   const logDir = path.join(ROOT, 'logs');
   fs.mkdirSync(logDir, { recursive: true });
-  fs.writeFileSync(path.join(logDir, 'kb-curate-heartbeat.json'), JSON.stringify({
-    lastAttempt: new Date().toISOString(),
-    lastSuccess: errors === 0 ? new Date().toISOString() : null,
-    entriesCreated: created, entriesUpdated: updated, errors,
-    totalEntries: master.entryCount, version: '3.0.0',
-  }, null, 2));
+  writeHeartbeat('kb-curate', {
+    status: (created > 0 || errors === 0) ? 'ok' : 'failed', // progress (created>0) is success even with some synth errors
+    counts: { created, updated, errors, totalEntries: master.entryCount },
+    durationMs: Date.now() - startTime,
+  });
   fs.appendFileSync(path.join(logDir, 'kb-curate.jsonl'), JSON.stringify({
     timestamp: new Date().toISOString(), created, updated, errors,
     totalEntries: master.entryCount, gapsFound: gaps.length,
@@ -275,11 +278,11 @@ async function main() {
 
   // Optional rebuild
   if (REBUILD && (created > 0 || updated > 0)) {
-    log('\nTriggering RVF rebuild...');
+    // Single canonical rebuilder: delegate to kb-export-pipeline.mjs (the ONE guarded
+    // build-lean -> build-quantized -> export-mcp path) instead of duplicating it here.
+    log('\nTriggering RVF rebuild via the canonical rebuilder (kb-export-pipeline.mjs --force)...');
     try {
-      execFileSync(NODE_BIN, [path.join(ROOT, 'scripts/build-lean-rvf.mjs')], { cwd: ROOT, stdio: 'inherit', timeout: 300000 });
-      execFileSync(NODE_BIN, [path.join(ROOT, 'scripts/build-quantized-rvf.mjs')], { cwd: ROOT, stdio: 'inherit', timeout: 120000 });
-      execFileSync(NODE_BIN, [path.join(ROOT, 'scripts/export-mcp-kb.mjs'), '--output', 'kb-data/'], { cwd: ROOT, stdio: 'inherit', timeout: 120000 });
+      execFileSync(NODE_BIN, [path.join(ROOT, 'scripts/kb-export-pipeline.mjs'), '--force'], { cwd: ROOT, stdio: 'inherit', timeout: 360000 });
       log('RVF rebuild + MCP export complete.');
     } catch (err) {
       log('WARNING: RVF rebuild failed: ' + err.message);
@@ -289,4 +292,8 @@ async function main() {
   }
 }
 
-main().catch(err => { log('FATAL: ' + err.message); process.exit(1); });
+main().catch(err => {
+  log('FATAL: ' + err.message);
+  writeHeartbeat('kb-curate', { status: 'failed', error: String(err.message) });
+  process.exit(1);
+});

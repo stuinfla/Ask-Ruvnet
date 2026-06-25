@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
 import { fileURLToPath } from 'url';
+import { preflight, writeHeartbeat } from './lib/preflight.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -106,11 +107,12 @@ function detectCategory(text) {
 function cloneOrPull(repoName) {
   const repoPath = path.join(TEMP_DIR, repoName);
   try {
-    if (fs.existsSync(repoPath)) {
-      execFileSync('git', ['pull', '--ff-only'], { cwd: repoPath, stdio: 'pipe', timeout: 60000 });
-    } else {
-      execFileSync('git', ['clone', '--depth', '1', 'https://github.com/ruvnet/' + repoName + '.git', repoPath], { stdio: 'pipe', timeout: 120000 });
-    }
+    // Always do a FRESH shallow clone. 'git pull --ff-only' refuses to reconcile a
+    // force-pushed / diverged / renamed-default-branch repo (that was the source of the
+    // recurring "Command failed: git pull --ff-only" errors). A fresh --depth 1 clone
+    // eliminates that failure class entirely and stays fast (latest snapshot only).
+    fs.rmSync(repoPath, { recursive: true, force: true });
+    execFileSync('git', ['clone', '--depth', '1', 'https://github.com/ruvnet/' + repoName + '.git', repoPath], { stdio: 'pipe', timeout: 180000 });
     return repoPath;
   } catch (e) {
     log('  Git error for ' + repoName + ': ' + (e.message || '').substring(0, 80));
@@ -122,7 +124,9 @@ async function getStaleRepos(manifest) {
   if (SINGLE_REPO) return [SINGLE_REPO];
   let ghRepos;
   try {
-    const out = execFileSync('gh', ['repo', 'list', 'ruvnet', '--limit', '300', '--json', 'name,pushedAt', '--jq', '.[] | [.name, .pushedAt] | @tsv'], { stdio: 'pipe', timeout: 30000 }).toString();
+    // Skip empty + archived repos at the source — they have no clonable content and
+    // would fail every night. Auto-covers any future empty/archived repo (no blocklist).
+    const out = execFileSync('gh', ['repo', 'list', 'ruvnet', '--limit', '300', '--json', 'name,pushedAt,isEmpty,isArchived', '--jq', '.[] | select(.isEmpty == false and .isArchived == false) | [.name, .pushedAt] | @tsv'], { stdio: 'pipe', timeout: 30000 }).toString();
     ghRepos = out.trim().split('\n').filter(Boolean).map(line => {
       const [name, pushedAt] = line.split('\t');
       return { name, pushedAt: new Date(pushedAt) };
@@ -185,7 +189,7 @@ async function ingestRepo(repoName, manifest) {
     fs.mkdirSync(RAW_DIR, { recursive: true });
     const ndjson = allChunks.map(c => JSON.stringify(c)).join('\n');
     fs.writeFileSync(path.join(RAW_DIR, repoName + '.ndjson.gz'), zlib.gzipSync(Buffer.from(ndjson), { level: 6 }));
-    manifest.repos[repoName] = { chunkCount: allChunks.length, fileCount: files.length, lastUpdated: new Date().toISOString() };
+    manifest.repos[repoName] = { chunkCount: allChunks.length, fileCount: files.length, lastUpdated: new Date().toISOString(), firstSeen: manifest.repos[repoName]?.firstSeen || new Date().toISOString() };
   }
 
   log('  ' + repoName + ': ' + allChunks.length + ' chunks from ' + files.length + ' files');
@@ -196,9 +200,12 @@ async function main() {
   log('==================================================');
   log('KB Evergreen v3.0.0 (PG-FREE)');
   log('==================================================\n');
+  preflight({ stage: 'kb-evergreen', requireFiles: [] });
   const manifest = loadManifest();
   const staleRepos = await getStaleRepos(manifest);
-  if (staleRepos.length === 0) { log('All repos up to date.'); return; }
+  const newRepos = staleRepos.filter(n => !manifest.repos[n]); // repos never ingested before this run
+  if (newRepos.length) log('🆕 NEW repos discovered: ' + newRepos.join(', '));
+  if (staleRepos.length === 0) { log('All repos up to date.'); writeHeartbeat('kb-evergreen', { status: 'ok', counts: { repos: 0, chunks: 0, errors: 0, newRepos: 0 }, durationMs: Date.now() - startTime }); return; }
   log('Processing ' + staleRepos.length + ' repos...\n');
   if (!fs.existsSync(TEMP_DIR)) await fsp.mkdir(TEMP_DIR, { recursive: true });
   if (!DRY_RUN) { log('Loading ONNX...'); await initOnnx(); log('ONNX ready.\n'); }
@@ -213,7 +220,8 @@ async function main() {
   if (!DRY_RUN) {
     saveManifest(manifest);
     fs.mkdirSync(path.join(ROOT, 'logs'), { recursive: true });
-    fs.appendFileSync(path.join(ROOT, 'logs', 'kb-evergreen.jsonl'), JSON.stringify({ timestamp: new Date().toISOString(), repos: staleRepos.length, chunks: totalChunks, errors: totalErrors, sec: Math.round((Date.now() - startTime) / 1000) }) + '\n');
+    fs.appendFileSync(path.join(ROOT, 'logs', 'kb-evergreen.jsonl'), JSON.stringify({ timestamp: new Date().toISOString(), repos: staleRepos.length, chunks: totalChunks, errors: totalErrors, newRepos: newRepos.length, newRepoNames: newRepos, sec: Math.round((Date.now() - startTime) / 1000) }) + '\n');
+    writeHeartbeat('kb-evergreen', { status: 'ok', counts: { repos: staleRepos.length, chunks: totalChunks, errors: totalErrors, newRepos: newRepos.length, newRepoNames: newRepos }, durationMs: Date.now() - startTime });
   }
 
   log('\n==================================================');
@@ -221,4 +229,8 @@ async function main() {
   log('==================================================');
 }
 
-main().catch(err => { log('FATAL: ' + err.message); process.exit(1); });
+main().catch(err => {
+  log('FATAL: ' + err.message);
+  writeHeartbeat('kb-evergreen', { status: 'failed', error: String(err.message) });
+  process.exit(1);
+});

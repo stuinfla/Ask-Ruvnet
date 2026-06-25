@@ -1,62 +1,66 @@
 {
   "version": "1.0.0",
   "schema": "ask_ruvnet",
-  "exportedAt": "2026-05-09T21:17:22.953Z",
-  "totalEntries": 550,
+  "exportedAt": "2026-06-24T21:08:23.955Z",
+  "totalEntries": 893,
   "embeddingDim": 384,
   "quantization": "binary",
   "categories": [
     {
       "name": "teaching",
-      "count": 165
+      "count": 178
+    },
+    {
+      "name": "architecture",
+      "count": 120
+    },
+    {
+      "name": "agents",
+      "count": 117
+    },
+    {
+      "name": "deployment",
+      "count": 72
+    },
+    {
+      "name": "general",
+      "count": 64
+    },
+    {
+      "name": "security",
+      "count": 50
     },
     {
       "name": "videos",
       "count": 50
     },
     {
-      "name": "agents",
-      "count": 49
-    },
-    {
-      "name": "architecture",
-      "count": 38
-    },
-    {
       "name": "neural",
-      "count": 37
+      "count": 48
     },
     {
       "name": "wasm-local-llm",
-      "count": 36
-    },
-    {
-      "name": "general",
-      "count": 35
+      "count": 41
     },
     {
       "name": "algorithms",
-      "count": 25
+      "count": 37
     },
     {
       "name": "vector-db",
-      "count": 22
-    },
-    {
-      "name": "security",
-      "count": 20
-    },
-    {
-      "name": "deployment",
-      "count": 8
+      "count": 25
     },
     {
       "name": "performance",
-      "count": 6
+      "count": 22
     },
     {
       "name": "swarms",
-      "count": 5
+      "count": 10
+    },
+    {
+      "name": "memory",
+      "count": 8
     },
     {
       "name": "implementation-path",
@@ -65,10 +69,6 @@
     {
       "name": "adr-ruvector-brain",
       "count": 4
-    },
-    {
-      "name": "memory",
-      "count": 3
     },
     {
       "name": "adr-ruvector-rvagent",

@@ -2250,40 +2250,12 @@ app.post('/api/special', specialEndpointLimiter, async (req, res) => {
     }
 });
 
-// --- AGENTIC LEARNING LOOP ---
-const { execFile } = require('child_process');
-
-function runAutoLearner() {
-    console.log("🧠 Agentic Learner: Checking for new knowledge...");
-    const updaterPath = path.resolve(__dirname, '../../scripts/kb-incremental-update.sh');
-    execFile(updaterPath, [], (error, stdout, stderr) => {
-        if (error) {
-            console.error(`❌ Learner Error: ${error.message} `);
-            return;
-        }
-        if (stdout.includes('Changes detected') || stdout.includes('Inserted/updated')) {
-            console.log("🚀 Agentic Learner: Knowledge Base Updated!");
-        } else {
-            console.log("💤 Agentic Learner: No new updates found.");
-        }
-    });
-}
-
-// Run Learner every 6 hours
-setInterval(runAutoLearner, 6 * 60 * 60 * 1000);
-
-// Manual Trigger Endpoint - requires API key in production
-app.post('/api/learn', (req, res) => {
-    if (process.env.NODE_ENV === 'production') {
-        const authHeader = req.headers.authorization;
-        if (!authHeader || authHeader !== `Bearer ${process.env.LEARN_API_KEY}`) {
-            return res.status(401).json({ error: 'Unauthorized. Requires LEARN_API_KEY.' });
-        }
-    }
-    console.log("🧠 Manual Learning Triggered");
-    runAutoLearner();
-    res.json({ message: "Learning process started in background." });
-});
+// --- AGENTIC LEARNING LOOP: REMOVED 2026-06-24 ---
+// The 6-hourly auto-learner + POST /api/learn route invoked the legacy Postgres
+// scripts/kb-incremental-update.sh — a SECOND ingest path that bypassed kb-master.json
+// and failed continuously after Postgres was retired. The single canonical ingest path
+// is now the nightly LaunchAgent chain (kb-evergreen -> kb-auto-curate ->
+// kb-export-pipeline -> self-heal -> watchdog). Do not reintroduce ingest logic here.
 
 // Serve Other Documents (PDFs, video, audio) — with CDN-friendly caching (9.6)
 app.use('/assets/docs', express.static(path.join(__dirname, '../ui/dist/assets/docs'), {

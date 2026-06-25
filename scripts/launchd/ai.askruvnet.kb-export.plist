@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<false/>
+	<key>Label</key>
+	<string>ai.askruvnet.kb-export</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/node</string>
+		<string>/Users/stuartkerr/Code/Ask-Ruvnet/Ask-Ruvnet/scripts/kb-export-pipeline.mjs</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/stuartkerr/Code/Ask-Ruvnet/Ask-Ruvnet/logs/kb-export-launchd.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/stuartkerr/Code/Ask-Ruvnet/Ask-Ruvnet/logs/kb-export-launchd.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>6</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/stuartkerr/Code/Ask-Ruvnet/Ask-Ruvnet</string>
+</dict>
+</plist>
