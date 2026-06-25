@@ -1726,7 +1726,7 @@ function saveVisitorData() {
 }
 
 // ---- Effectiveness: questions asked, KB coverage gaps, helpfulness ratings ----
-let effect = { totalQuestions: 0, answeredQuestions: 0, ratings: { up: 0, down: 0 }, gaps: [], firstSeen: Date.now() };
+let effect = { totalQuestions: 0, zeroResultQuestions: 0, ratings: { up: 0, down: 0 }, gaps: [], firstSeen: Date.now() };
 try { if (fs.existsSync(EFFECT_FILE)) effect = { ...effect, ...JSON.parse(fs.readFileSync(EFFECT_FILE, 'utf8')) }; }
 catch (e) { console.warn('[analytics] effectiveness.json load failed, starting fresh:', e.message); }
 function saveEffect() {
@@ -1740,14 +1740,17 @@ function pushGap(entry) {
 // Record a question + its retrieval quality. Fire-and-forget; NEVER throws into the chat path.
 function recordQuestion({ query, topScore = 0, resultCount = 0, confidence = 'low' }) {
     try {
-        // Gate on the app's own calibrated confidence (RVF scores aren't normalized to [0,1]).
-        // A low-confidence answer = weak KB coverage = a gap worth surfacing for the curator.
-        const confident = confidence && confidence !== 'low' && confidence !== 'none';
-        const answered = resultCount > 0 && confident;
+        // The RAG 'confidence' label and the un-normalized topScore are BOTH unreliable coverage
+        // signals (off-topic questions still retrieve ~similar scores and rate 'high'), so we do NOT
+        // auto-classify "answered". Reliable gap signals only: zero retrieval results here + explicit
+        // 👎 downvotes (see /api/feedback). Every question is logged raw (topScore/confidence kept for
+        // offline analysis) so the full ask-stream can be reviewed.
         effect.totalQuestions++;
-        if (answered) effect.answeredQuestions++;
-        else pushGap({ q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence, ts: new Date().toISOString() });
-        try { ensureDataDir(); fs.appendFileSync(QUERY_LOG, JSON.stringify({ ts: new Date().toISOString(), q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence, answered }) + '\n'); } catch { /* log best-effort */ }
+        if (resultCount === 0) {
+            effect.zeroResultQuestions++;
+            pushGap({ q: String(query).slice(0, 200), reason: 'no-results', ts: new Date().toISOString() });
+        }
+        try { ensureDataDir(); fs.appendFileSync(QUERY_LOG, JSON.stringify({ ts: new Date().toISOString(), q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence }) + '\n'); } catch { /* log best-effort */ }
         saveEffect();
     } catch (e) { console.warn('[analytics] recordQuestion failed:', e.message); }
 }
@@ -1755,8 +1758,7 @@ function summarizeEffect() {
     const ratingsTotal = effect.ratings.up + effect.ratings.down;
     return {
         totalQuestions: effect.totalQuestions,
-        answeredQuestions: effect.answeredQuestions,
-        answerRate: effect.totalQuestions ? Math.round((effect.answeredQuestions / effect.totalQuestions) * 100) : null,
+        zeroResultQuestions: effect.zeroResultQuestions,
         ratingsTotal,
         helpfulPct: ratingsTotal ? Math.round((effect.ratings.up / ratingsTotal) * 100) : null,
     };

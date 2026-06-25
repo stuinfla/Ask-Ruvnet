@@ -1,6 +1,6 @@
 {
   "name": "ask-ruvnet",
-  "version": "4.17.1",
+  "version": "4.17.2",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
