@@ -910,7 +910,12 @@ function App() {
     fetch('/api/ecosystem-stats').then(r => r.json()).then(data => setEcosystemStats(data)).catch(() => {});
     fetch('/api/latest-repos').then(r => r.json()).then(data => setLatestRepos(data)).catch(() => {});
     fetch('/api/community-stats').then(r => r.json()).then(data => setCommunityStats(data)).catch(() => {});
-    fetch('/api/visitors').then(r => r.json()).then(data => setVisitorStats(data)).catch(() => {});
+    // Beacon a real page view (only loaded SPAs run this — bots/health-checks don't), then read merged stats
+    fetch('/api/track/visit', { method: 'POST' })
+      .then(() => fetch('/api/visitors'))
+      .then(r => r.json())
+      .then(data => setVisitorStats(data))
+      .catch(() => {});
     // Check KB health — surface problems immediately
     fetch('/api/kb-stats').then(r => {
       if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'KB unavailable'); });
@@ -1088,6 +1093,17 @@ function App() {
       return <a href={href} {...props}>{children}</a>;
     },
   }), [setCanvasContent]);
+
+  // Thumbs up/down on an answer → records helpfulness; a downvote also feeds the KB content-gap list
+  const submitFeedback = (idx, rating) => {
+    setMessages(prev => prev.map((m, i) => (i === idx ? { ...m, rated: rating } : m)));
+    const q = messages[idx - 1]?.role === 'user' ? messages[idx - 1].content : '';
+    fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating, query: (q || '').slice(0, 200) }),
+    }).catch(() => {});
+  };
 
   const handleSubmit = async (e, specialMode = null) => {
     e?.preventDefault();
@@ -1675,6 +1691,14 @@ function App() {
             <span className="stats-dot">·</span>
             <span><span className="stats-highlight"><CountUp end={visitorStats.uniqueVisitors} /></span> Unique Visitors</span>
           </>)}
+          {visitorStats?.totalQuestions > 0 && (<>
+            <span className="stats-dot">·</span>
+            <span><span className="stats-highlight"><CountUp end={visitorStats.totalQuestions} /></span> Questions Asked</span>
+          </>)}
+          {visitorStats?.ratingsTotal > 0 && visitorStats?.helpfulPct != null && (<>
+            <span className="stats-dot">·</span>
+            <span><span className="stats-highlight"><CountUp end={visitorStats.helpfulPct} suffix="%" /></span> Found Helpful</span>
+          </>)}
           <span className="stat-live-dot" title="Stats refresh hourly from GitHub and npm">Live</span>
         </div>
       )}
@@ -1814,6 +1838,13 @@ function App() {
                             <div className="message-actions">
                               <button className="action-btn" onClick={() => copyToClipboard(msg.content)} aria-label="Copy response to clipboard"><span aria-hidden="true">📋</span> Copy</button>
                               <button className="action-btn" onClick={() => setCanvasContent({ type: 'text', content: msg.content })} aria-label="Open response in canvas"><span aria-hidden="true">➡️</span> Open in Canvas</button>
+                              {!msg.streaming && (
+                                <span className="feedback-group" role="group" aria-label="Was this answer helpful?">
+                                  <button className={`action-btn fb-btn${msg.rated === 'up' ? ' fb-active' : ''}`} disabled={!!msg.rated} onClick={() => submitFeedback(idx, 'up')} aria-label="Mark this answer helpful"><span aria-hidden="true">👍</span></button>
+                                  <button className={`action-btn fb-btn${msg.rated === 'down' ? ' fb-active' : ''}`} disabled={!!msg.rated} onClick={() => submitFeedback(idx, 'down')} aria-label="Mark this answer not helpful"><span aria-hidden="true">👎</span></button>
+                                  {msg.rated && <span className="fb-thanks" aria-live="polite">Thanks!</span>}
+                                </span>
+                              )}
                             </div>
                             {idx === messages.length - 1 && !msg.streaming && (
                               <>

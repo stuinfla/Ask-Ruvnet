@@ -1470,6 +1470,9 @@ app.post('/api/chat', async (req, res) => {
         }
         const { sources, messages, confidence, kbStatus, queryRequirements } = ragResult;
 
+        // Effectiveness telemetry — record what was asked and how well the KB covered it
+        recordQuestion({ query: message, topScore: (sources || []).reduce((m, s) => Math.max(m, s.score || 0), 0), resultCount: (sources || []).length, confidence });
+
         // Generate Response using multi-provider LLM (with automatic fallback)
         let answer = "";
         let errorMsg = null;
@@ -1561,6 +1564,9 @@ app.post('/api/chat/stream', async (req, res) => {
             console.log(`[RAG Cache] MISS — cached key ${cacheKey} (stream)`);
         }
         const { sources, messages, confidence, kbStatus, queryRequirements } = ragResult;
+
+        // Effectiveness telemetry — record what was asked and how well the KB covered it
+        recordQuestion({ query: message, topScore: (sources || []).reduce((m, s) => Math.max(m, s.score || 0), 0), resultCount: (sources || []).length, confidence });
 
         // Send KB status and confidence first as JSON events
         if (kbStatus && kbStatus !== 'ok') {
@@ -1684,58 +1690,128 @@ app.get('/health', async (req, res) => {
 // Lightweight usage analytics (9.3) — tracks resource engagement, no PII
 const usageStats = { queries: 0, resources: {}, capabilities: {}, startTime: Date.now() };
 
-// Unique visitor tracking by hashed IP — persists across restarts
+// ============================================================================
+// Site analytics — USAGE (visitors) + EFFECTIVENESS (questions, gaps, ratings)
+// State persists to /app/data so it survives restarts. Mount a Railway volume
+// at /app/data to make it durable across DEPLOYS too (zero code change needed).
+// ============================================================================
 const crypto = require('crypto');
-const VISITORS_FILE = path.join(__dirname, '../../data/visitors.json');
-let visitorData = { uniqueIPs: [], totalPageViews: 0, firstSeen: Date.now() };
-try {
-    if (fs.existsSync(VISITORS_FILE)) {
-        visitorData = JSON.parse(fs.readFileSync(VISITORS_FILE, 'utf8'));
-    }
-} catch (e) {
-    console.warn('[visitors] Could not load visitors.json, starting fresh:', e.message);
+const DATA_DIR = path.join(__dirname, '../../data');
+const VISITORS_FILE = path.join(DATA_DIR, 'visitors.json');
+const EFFECT_FILE = path.join(DATA_DIR, 'effectiveness.json');
+const QUERY_LOG = path.join(DATA_DIR, 'query-log.ndjson');
+const ANSWERED_SCORE = 0.5; // secondary gate: min top relevance to count as "answered"
+
+function ensureDataDir() { try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { /* non-fatal */ } }
+function hashIP(req) {
+    const rawIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    return crypto.createHash('sha256').update(rawIP + 'ask-ruvnet-salt').digest('hex').substring(0, 16);
 }
+
+// ---- Visitors: counted via an explicit beacon from the LOADED SPA, so bots
+//      and health-check pings (which never execute JS) don't inflate the count ----
+let visitorData = { uniqueIPs: [], totalPageViews: 0, firstSeen: Date.now() };
+try { if (fs.existsSync(VISITORS_FILE)) visitorData = JSON.parse(fs.readFileSync(VISITORS_FILE, 'utf8')); }
+catch (e) { console.warn('[analytics] visitors.json load failed, starting fresh:', e.message); }
 const visitorIPSet = new Set(visitorData.uniqueIPs || []);
 function saveVisitorData() {
     try {
-        const dir = path.dirname(VISITORS_FILE);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        ensureDataDir();
         fs.writeFileSync(VISITORS_FILE, JSON.stringify({
             uniqueIPs: [...visitorIPSet],
             totalPageViews: visitorData.totalPageViews,
             firstSeen: visitorData.firstSeen,
             lastUpdated: new Date().toISOString()
         }, null, 2));
-    } catch (e) {
-        console.warn('[visitors] Could not save visitors.json:', e.message);
-    }
+    } catch (e) { console.warn('[analytics] visitors.json save failed:', e.message); }
 }
-// Middleware: track every request's IP (hashed)
-app.use((req, res, next) => {
-    const rawIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-    const hashedIP = crypto.createHash('sha256').update(rawIP + 'ask-ruvnet-salt').digest('hex').substring(0, 16);
-    visitorData.totalPageViews++;
-    if (!visitorIPSet.has(hashedIP)) {
-        visitorIPSet.add(hashedIP);
-        // Save periodically (every new unique visitor)
+
+// ---- Effectiveness: questions asked, KB coverage gaps, helpfulness ratings ----
+let effect = { totalQuestions: 0, answeredQuestions: 0, ratings: { up: 0, down: 0 }, gaps: [], firstSeen: Date.now() };
+try { if (fs.existsSync(EFFECT_FILE)) effect = { ...effect, ...JSON.parse(fs.readFileSync(EFFECT_FILE, 'utf8')) }; }
+catch (e) { console.warn('[analytics] effectiveness.json load failed, starting fresh:', e.message); }
+function saveEffect() {
+    try { ensureDataDir(); fs.writeFileSync(EFFECT_FILE, JSON.stringify({ ...effect, lastUpdated: new Date().toISOString() }, null, 2)); }
+    catch (e) { console.warn('[analytics] effectiveness.json save failed:', e.message); }
+}
+function pushGap(entry) {
+    effect.gaps.push(entry);
+    if (effect.gaps.length > 100) effect.gaps = effect.gaps.slice(-100);
+}
+// Record a question + its retrieval quality. Fire-and-forget; NEVER throws into the chat path.
+function recordQuestion({ query, topScore = 0, resultCount = 0, confidence = 'low' }) {
+    try {
+        const confident = confidence && confidence !== 'low' && confidence !== 'none';
+        const answered = resultCount > 0 && (confident || topScore >= ANSWERED_SCORE);
+        effect.totalQuestions++;
+        if (answered) effect.answeredQuestions++;
+        else pushGap({ q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence, ts: new Date().toISOString() });
+        try { ensureDataDir(); fs.appendFileSync(QUERY_LOG, JSON.stringify({ ts: new Date().toISOString(), q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence, answered }) + '\n'); } catch { /* log best-effort */ }
+        saveEffect();
+    } catch (e) { console.warn('[analytics] recordQuestion failed:', e.message); }
+}
+function summarizeEffect() {
+    const ratingsTotal = effect.ratings.up + effect.ratings.down;
+    return {
+        totalQuestions: effect.totalQuestions,
+        answeredQuestions: effect.answeredQuestions,
+        answerRate: effect.totalQuestions ? Math.round((effect.answeredQuestions / effect.totalQuestions) * 100) : null,
+        ratingsTotal,
+        helpfulPct: ratingsTotal ? Math.round((effect.ratings.up / ratingsTotal) * 100) : null,
+    };
+}
+
+// Flush both stores every 5 minutes regardless
+setInterval(() => { saveVisitorData(); saveEffect(); }, 5 * 60 * 1000);
+
+// Beacon: the SPA POSTs this once on load = one real human page view
+app.post('/api/track/visit', (req, res) => {
+    try {
+        visitorData.totalPageViews++;
+        const h = hashIP(req);
+        if (!visitorIPSet.has(h)) visitorIPSet.add(h);
         saveVisitorData();
-    }
-    next();
+    } catch (e) { console.warn('[analytics] track/visit failed:', e.message); }
+    res.json({ ok: true, uniqueVisitors: visitorIPSet.size, totalPageViews: visitorData.totalPageViews });
 });
-// Save visitor data every 5 minutes regardless
-setInterval(saveVisitorData, 5 * 60 * 1000);
-// API endpoint for visitor stats
+
+// Helpfulness rating from a 👍/👎 click under an answer. A downvote is also a gap.
+app.post('/api/feedback', (req, res) => {
+    const { rating, query } = req.body || {};
+    if (rating !== 'up' && rating !== 'down') return res.status(400).json({ error: "rating must be 'up' or 'down'" });
+    try {
+        effect.ratings[rating]++;
+        if (rating === 'down' && query) pushGap({ q: sanitizeInput(String(query)).slice(0, 200), reason: 'downvote', ts: new Date().toISOString() });
+        saveEffect();
+    } catch (e) { console.warn('[analytics] feedback failed:', e.message); }
+    res.json({ ok: true });
+});
+
+// Combined public stats for the header stats bar (visitors + effectiveness)
 app.get('/api/visitors', (req, res) => {
     res.json({
         uniqueVisitors: visitorIPSet.size,
         totalPageViews: visitorData.totalPageViews,
-        trackingSince: new Date(visitorData.firstSeen).toISOString()
+        trackingSince: new Date(visitorData.firstSeen).toISOString(),
+        ...summarizeEffect(),
     });
 });
+
+// Full analytics incl. the content-GAP list (low-confidence / zero-result / downvoted questions)
+app.get('/api/analytics/summary', (req, res) => {
+    res.json({
+        ...summarizeEffect(),
+        uniqueVisitors: visitorIPSet.size,
+        totalPageViews: visitorData.totalPageViews,
+        topGaps: effect.gaps.slice(-15).reverse(),
+        uptimeMs: Date.now() - usageStats.startTime,
+    });
+});
+
+// Legacy in-memory event counter (kept for any existing callers)
 app.post('/api/analytics/event', (req, res) => {
     const { type, name } = req.body || {};
     if (!type || !name) return res.status(400).json({ error: 'type and name required' });
-    // Allowlist type values; sanitize name to prevent prototype pollution via object keys
     const allowedTypes = ['query', 'resource', 'capability'];
     if (!allowedTypes.includes(type)) return res.status(400).json({ error: 'Invalid type' });
     const safeName = sanitizeInput(String(name)).substring(0, 200);
@@ -1744,9 +1820,6 @@ app.post('/api/analytics/event', (req, res) => {
     else if (type === 'resource') usageStats.resources[safeName] = (usageStats.resources[safeName] || 0) + 1;
     else if (type === 'capability') usageStats.capabilities[safeName] = (usageStats.capabilities[safeName] || 0) + 1;
     res.json({ ok: true });
-});
-app.get('/api/analytics/summary', (req, res) => {
-    res.json({ ...usageStats, uptimeMs: Date.now() - usageStats.startTime });
 });
 
 // LLM Provider Status — shows which providers are configured and the fallback chain

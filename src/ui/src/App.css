@@ -1305,6 +1305,31 @@ body {
   color: #fff;
 }
 
+/* Helpfulness feedback (👍/👎) */
+.feedback-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto; /* push to the right of the action row */
+}
+.fb-btn {
+  padding: 0.4rem 0.6rem;
+}
+.fb-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.fb-btn.fb-active {
+  border-color: #22c55e;
+  color: #22c55e;
+  opacity: 1;
+}
+.fb-thanks {
+  font-size: 0.72rem;
+  color: #22c55e;
+  font-family: 'JetBrains Mono', monospace;
+}
+
 /* ===== SOURCE CARDS (Expandable + Paginated) ===== */
 .sources {
   margin-top: 1.25rem;
