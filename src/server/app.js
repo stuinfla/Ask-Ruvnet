@@ -1700,7 +1700,6 @@ const DATA_DIR = path.join(__dirname, '../../data');
 const VISITORS_FILE = path.join(DATA_DIR, 'visitors.json');
 const EFFECT_FILE = path.join(DATA_DIR, 'effectiveness.json');
 const QUERY_LOG = path.join(DATA_DIR, 'query-log.ndjson');
-const ANSWERED_SCORE = 0.5; // secondary gate: min top relevance to count as "answered"
 
 function ensureDataDir() { try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { /* non-fatal */ } }
 function hashIP(req) {
@@ -1741,8 +1740,10 @@ function pushGap(entry) {
 // Record a question + its retrieval quality. Fire-and-forget; NEVER throws into the chat path.
 function recordQuestion({ query, topScore = 0, resultCount = 0, confidence = 'low' }) {
     try {
+        // Gate on the app's own calibrated confidence (RVF scores aren't normalized to [0,1]).
+        // A low-confidence answer = weak KB coverage = a gap worth surfacing for the curator.
         const confident = confidence && confidence !== 'low' && confidence !== 'none';
-        const answered = resultCount > 0 && (confident || topScore >= ANSWERED_SCORE);
+        const answered = resultCount > 0 && confident;
         effect.totalQuestions++;
         if (answered) effect.answeredQuestions++;
         else pushGap({ q: String(query).slice(0, 200), topScore: Number(topScore) || 0, resultCount, confidence, ts: new Date().toISOString() });
